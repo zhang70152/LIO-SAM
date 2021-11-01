@@ -353,11 +353,14 @@ public:
             double imuTime = ROS_TIME(thisImu);
             if (imuTime < currentCorrectionTime - delta_t)
             {
-                double dt = (lastImuT_opt < 0) ? (1.0 / 500.0) : (imuTime - lastImuT_opt);
+                double dt = (lastImuT_opt < 0) ? (1.0 / 100.0) : (imuTime - lastImuT_opt);
                 imuIntegratorOpt_->integrateMeasurement(
                         gtsam::Vector3(thisImu->linear_acceleration.x, thisImu->linear_acceleration.y, thisImu->linear_acceleration.z),
                         gtsam::Vector3(thisImu->angular_velocity.x,    thisImu->angular_velocity.y,    thisImu->angular_velocity.z), dt);
                 
+
+                std::cout<<" ax:"<<thisImu->linear_acceleration.x<<"  ay:"<<thisImu->linear_acceleration.y<<" az:"<<thisImu->linear_acceleration.z<<std::endl;
+                std::cout<<" zx:"<<thisImu->angular_velocity.x<<"  zy:"<<thisImu->angular_velocity.y<<" zz:"<<thisImu->angular_velocity.z <<std::endl;
                 lastImuT_opt = imuTime;
                 imuQueOpt.pop_front();
             }
@@ -421,7 +424,7 @@ public:
             {
                 sensor_msgs::Imu *thisImu = &imuQueImu[i];
                 double imuTime = ROS_TIME(thisImu);
-                double dt = (lastImuQT < 0) ? (1.0 / 500.0) :(imuTime - lastImuQT);
+                double dt = (lastImuQT < 0) ? (1.0 / 100.0) :(imuTime - lastImuQT);
 
                 imuIntegratorImu_->integrateMeasurement(gtsam::Vector3(thisImu->linear_acceleration.x, thisImu->linear_acceleration.y, thisImu->linear_acceleration.z),
                                                         gtsam::Vector3(thisImu->angular_velocity.x,    thisImu->angular_velocity.y,    thisImu->angular_velocity.z), dt);
@@ -435,6 +438,11 @@ public:
 
     bool failureDetection(const gtsam::Vector3& velCur, const gtsam::imuBias::ConstantBias& biasCur)
     {
+        std::cout<<" ---------------------------------------------------------------------------------"<<std::endl;
+        std::cout<<" vx:"<<velCur.x()<<"  vy:"<<velCur.y()<<" vz:"<<velCur.z() <<std::endl;
+        std::cout<<" ba.x:"<<biasCur.accelerometer().x()<<"  ba.y:"<<biasCur.accelerometer().y()<<" ba.z:"<<biasCur.accelerometer().z() <<std::endl;
+        std::cout<<" bg.x:"<<biasCur.gyroscope().x()<<"  bg.y:"<<biasCur.gyroscope().y()<<" bg.z:"<<biasCur.gyroscope().z() <<std::endl;
+
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
         if (vel.norm() > 30)
         {
@@ -444,7 +452,7 @@ public:
 
         Eigen::Vector3f ba(biasCur.accelerometer().x(), biasCur.accelerometer().y(), biasCur.accelerometer().z());
         Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(), biasCur.gyroscope().z());
-        if (ba.norm() > 1.0 || bg.norm() > 1.0)
+        if (ba.norm() > 5.0 || bg.norm() > 1.0)
         {
             ROS_WARN("Large bias, reset IMU-preintegration!");
             return true;
@@ -466,7 +474,7 @@ public:
             return;
 
         double imuTime = ROS_TIME(&thisImu);
-        double dt = (lastImuT_imu < 0) ? (1.0 / 500.0) : (imuTime - lastImuT_imu);
+        double dt = (lastImuT_imu < 0) ? (1.0 / 100.0) : (imuTime - lastImuT_imu);
         lastImuT_imu = imuTime;
 
         // integrate this single imu message

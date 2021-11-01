@@ -266,7 +266,7 @@ public:
             deskewFlag = -1;
             for (auto &field : currentCloudMsg.fields)
             {
-                if (field.name == "time" || field.name == "t")
+                if (field.name == "timestamp" || field.name == "t")
                 {
                     deskewFlag = 1;
                     break;
@@ -555,6 +555,7 @@ public:
             rangeMat.at<float>(rowIdn, columnIdn) = range;
 
             int index = columnIdn + rowIdn * Horizon_SCAN;
+            
             fullCloud->points[index] = thisPoint;
         }
     }
@@ -576,9 +577,13 @@ public:
                     // save range info
                     cloudInfo.pointRange[count] = rangeMat.at<float>(i,j);
                     // save extracted cloud
-                    extractedCloud->push_back(fullCloud->points[j + i*Horizon_SCAN]);
-                    // size of extracted cloud
-                    ++count;
+                    if(fullCloud->points[j + i*Horizon_SCAN].intensity>10)
+                    {
+                        extractedCloud->push_back(fullCloud->points[j + i*Horizon_SCAN]);
+                        // size of extracted cloud
+                        ++count;
+                    }
+
                 }
             }
             cloudInfo.endRingIndex[i] = count -1 - 5;
