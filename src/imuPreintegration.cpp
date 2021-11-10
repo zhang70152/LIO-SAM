@@ -359,8 +359,8 @@ public:
                         gtsam::Vector3(thisImu->angular_velocity.x,    thisImu->angular_velocity.y,    thisImu->angular_velocity.z), dt);
                 
 
-                std::cout<<" ax:"<<thisImu->linear_acceleration.x<<"  ay:"<<thisImu->linear_acceleration.y<<" az:"<<thisImu->linear_acceleration.z<<std::endl;
-                std::cout<<" zx:"<<thisImu->angular_velocity.x<<"  zy:"<<thisImu->angular_velocity.y<<" zz:"<<thisImu->angular_velocity.z <<std::endl;
+                // std::cout<<" ax:"<<thisImu->linear_acceleration.x<<"  ay:"<<thisImu->linear_acceleration.y<<" az:"<<thisImu->linear_acceleration.z<<std::endl;
+                // std::cout<<" zx:"<<thisImu->angular_velocity.x<<"  zy:"<<thisImu->angular_velocity.y<<" zz:"<<thisImu->angular_velocity.z <<std::endl;
                 lastImuT_opt = imuTime;
                 imuQueOpt.pop_front();
             }
@@ -438,10 +438,10 @@ public:
 
     bool failureDetection(const gtsam::Vector3& velCur, const gtsam::imuBias::ConstantBias& biasCur)
     {
-        std::cout<<" ---------------------------------------------------------------------------------"<<std::endl;
-        std::cout<<" vx:"<<velCur.x()<<"  vy:"<<velCur.y()<<" vz:"<<velCur.z() <<std::endl;
-        std::cout<<" ba.x:"<<biasCur.accelerometer().x()<<"  ba.y:"<<biasCur.accelerometer().y()<<" ba.z:"<<biasCur.accelerometer().z() <<std::endl;
-        std::cout<<" bg.x:"<<biasCur.gyroscope().x()<<"  bg.y:"<<biasCur.gyroscope().y()<<" bg.z:"<<biasCur.gyroscope().z() <<std::endl;
+        // std::cout<<" ---------------------------------------------------------------------------------"<<std::endl;
+        // std::cout<<" vx:"<<velCur.x()<<"  vy:"<<velCur.y()<<" vz:"<<velCur.z() <<std::endl;
+        // std::cout<<" ba.x:"<<biasCur.accelerometer().x()<<"  ba.y:"<<biasCur.accelerometer().y()<<" ba.z:"<<biasCur.accelerometer().z() <<std::endl;
+        // std::cout<<" bg.x:"<<biasCur.gyroscope().x()<<"  bg.y:"<<biasCur.gyroscope().y()<<" bg.z:"<<biasCur.gyroscope().z() <<std::endl;
 
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
         if (vel.norm() > 30)
