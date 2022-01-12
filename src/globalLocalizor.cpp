@@ -86,17 +86,16 @@ public:
     std::deque<nav_msgs::Odometry> odom_queue_;
     std::deque<lio_sam::cloud_info> cloud_queue_;
 
-    enum InitializedFlag
-    {
-        NonInitialized,
-        Initializing,
-        Initialized
-    };
-    InitializedFlag initializedFlag;
+    ros::Time lastest_odom_time_;
+
+
 
     geometry_msgs::PoseStamped poseOdomToMap;
     ros::Publisher pubOdomToMapPose;
     tf::Transform map_to_odom;
+    tf::Transform frozen_map_to_baselink;
+
+    bool pose_inited_ = false;
 
     globalLocalizor()
     {
@@ -133,7 +132,7 @@ public:
         for (int i = 0; i < 6; ++i){
             tranformOdomToWorld[i] = 0;
         }
-        initializedFlag = Initializing;
+    
         loadGlobalMap();
 
     }
@@ -235,17 +234,7 @@ public:
         std::cout << "test 0.02  the size of global map after filter: " << cloudGlobalMapDS->points.size() << std::endl;
     }
 
-    void globalLocalizeThread()
-    {
 
-        ros::Rate rate(0.5);
-        while (ros::ok())
-        {
-            std::cout << "Run once " << std::endl;//do nothing, wait for a new initial guess
-            process();
-            rate.sleep();
-        }
-    }
 
     void ICPMatch(pcl::PointCloud<PointType>::Ptr cloud_for_match, nav_msgs::Odometry synced_odom)
     {
@@ -255,6 +244,57 @@ public:
         }
     
 
+        // update latest frozen map pose for initial guess
+        {
+            tf::StampedTransform frozenMap2Baselink;
+            try
+            {
+                tfListener.waitForTransform("frozen_map", "base_link", synced_odom.header.stamp, ros::Duration(0.1));
+                tfListener.lookupTransform("frozen_map", "base_link", synced_odom.header.stamp, frozenMap2Baselink);
+            } 
+            catch (tf::TransformException ex)
+            {
+                ROS_ERROR("%s",ex.what());
+            }
+            double roll1, pitch1, yaw1;
+            tf::Matrix3x3(frozenMap2Baselink.getRotation()).getRPY(roll1, pitch1, yaw1);
+            transformInTheWorld[0] = roll1;
+            transformInTheWorld[1] = pitch1;
+            transformInTheWorld[2] = yaw1;
+            transformInTheWorld[3] = frozenMap2Baselink.getOrigin().getX();
+            transformInTheWorld[4] = frozenMap2Baselink.getOrigin().getY();
+            transformInTheWorld[5] = frozenMap2Baselink.getOrigin().getZ(); 
+        }
+
+        PointTypePose thisPose6DInWorld = trans2PointTypePose(transformInTheWorld);
+        Eigen::Affine3f T_thisPose6DInWorld = pclPointToAffine3f(thisPose6DInWorld);
+    
+
+   
+        // First do ndt.
+        pcl::NormalDistributionsTransform<PointType, PointType> ndt;
+        ndt.setTransformationEpsilon(0.01);
+        ndt.setResolution(1.0);
+        ndt.setInputSource(cloud_for_match);
+        ndt.setInputTarget(cloudGlobalMapDS);
+        pcl::PointCloud<PointType>::Ptr unused_result_0(new pcl::PointCloud<PointType>());
+        ndt.align(*unused_result_0, T_thisPose6DInWorld.matrix());
+
+
+        //use the outcome of ndt as the initial guess for ICP
+        pcl::IterativeClosestPoint<PointType, PointType> icp;
+        icp.setMaxCorrespondenceDistance(100);
+        icp.setMaximumIterations(100);
+        icp.setTransformationEpsilon(1e-6);
+        icp.setEuclideanFitnessEpsilon(1e-6);
+        icp.setRANSACIterations(0);
+        icp.setInputSource(cloud_for_match);
+        icp.setInputTarget(cloudGlobalMapDS);
+        pcl::PointCloud<PointType>::Ptr unused_result(new pcl::PointCloud<PointType>());
+        icp.align(*unused_result, ndt.getFinalTransformation());
+
+
+        //update pose in odom frame.
         transformTobeMapped[3] = synced_odom.pose.pose.position.x;
         transformTobeMapped[4] = synced_odom.pose.pose.position.y;
         transformTobeMapped[5] = synced_odom.pose.pose.position.z;
@@ -271,111 +311,57 @@ public:
         transformTobeMapped[0] = roll2;
         transformTobeMapped[1] = pitch2;
         transformTobeMapped[2] = yaw2;
-
-
-
-        std::cout<<"here1."<<std::endl;
-   
-
-        pcl::NormalDistributionsTransform<PointType, PointType> ndt;
-        ndt.setTransformationEpsilon(0.01);
-        ndt.setResolution(1.0);
-
-
-        pcl::IterativeClosestPoint<PointType, PointType> icp;
-        icp.setMaxCorrespondenceDistance(100);
-        icp.setMaximumIterations(100);
-        icp.setTransformationEpsilon(1e-6);
-        icp.setEuclideanFitnessEpsilon(1e-6);
-        icp.setRANSACIterations(0);
-
-        ndt.setInputSource(cloud_for_match);
-        ndt.setInputTarget(cloudGlobalMapDS);
-        pcl::PointCloud<PointType>::Ptr unused_result_0(new pcl::PointCloud<PointType>());
-
-        PointTypePose thisPose6DInWorld = trans2PointTypePose(transformInTheWorld);
-        Eigen::Affine3f T_thisPose6DInWorld = pclPointToAffine3f(thisPose6DInWorld);
-        ndt.align(*unused_result_0, T_thisPose6DInWorld.matrix());
-
-
-        //use the outcome of ndt as the initial guess for ICP
-        icp.setInputSource(cloud_for_match);
-        icp.setInputTarget(cloudGlobalMapDS);
-        pcl::PointCloud<PointType>::Ptr unused_result(new pcl::PointCloud<PointType>());
-        icp.align(*unused_result, ndt.getFinalTransformation());
-
-
-
-
         PointTypePose thisPose6DInOdom = trans2PointTypePose(transformTobeMapped);
 	    
         Eigen::Affine3f T_thisPose6DInOdom = pclPointToAffine3f(thisPose6DInOdom);  
 
-        Eigen::Affine3f T_thisPose6DInMap;
-        T_thisPose6DInMap = icp.getFinalTransformation();
-        float x_g, y_g, z_g, R_g, P_g, Y_g;
-        pcl::getTranslationAndEulerAngles (T_thisPose6DInMap, x_g, y_g, z_g, R_g, P_g, Y_g);
-        transformInTheWorld[0] = R_g;
-        transformInTheWorld[1] = P_g;
-        transformInTheWorld[2] = Y_g;
-        transformInTheWorld[3] = x_g;
-        transformInTheWorld[4] = y_g;
-        transformInTheWorld[5] = z_g;
 
 
-        Eigen::Affine3f transOdomToMap = T_thisPose6DInMap * T_thisPose6DInOdom.inverse();
-        float deltax, deltay, deltaz, deltaR, deltaP, deltaY;
-        pcl::getTranslationAndEulerAngles (transOdomToMap, deltax, deltay, deltaz, deltaR, deltaP, deltaY);
 
-        mtxtranformOdomToWorld.lock();
-            //renew tranformOdomToWorld
-        tranformOdomToWorld[0] = deltaR;
-        tranformOdomToWorld[1] = deltaP;
-        tranformOdomToWorld[2] = deltaY;
-        tranformOdomToWorld[3] = deltax;
-        tranformOdomToWorld[4] = deltay;
-        tranformOdomToWorld[5] = deltaz;
-        mtxtranformOdomToWorld.unlock();
 
-        publishCloud(&pubLaserCloudInWorld, unused_result, synced_odom.header.stamp, "frozen_map");
 
 
         if (icp.hasConverged() == false || icp.getFitnessScore() > historyKeyframeFitnessScore)
         {
-            initializedFlag = Initializing;
             std::cout << "---------Initializing Fail, score:" <<icp.getFitnessScore() << std::endl;
             return;
         } else{
-            initializedFlag = Initialized;
             std::cout << "-------Initializing Succeed score:" <<icp.getFitnessScore() <<std::endl;
 
-            static bool first_save = false;
-            if(!first_save) {
-                pcl::io::savePCDFileBinary("/home/bot/workspace/ndt_result.pcd", *unused_result_0);
-                pcl::io::savePCDFileBinary("/home/bot/workspace/icp_result.pcd", *unused_result);
-                pcl::io::savePCDFileBinary("/home/bot/workspace/cloudGlobalMapDS.pcd", *cloudGlobalMapDS);
-                first_save = false;
-            }
+            Eigen::Affine3f T_thisPose6DInMap;
+            T_thisPose6DInMap = icp.getFinalTransformation();
+            float x_g, y_g, z_g, R_g, P_g, Y_g;
+            pcl::getTranslationAndEulerAngles (T_thisPose6DInMap, x_g, y_g, z_g, R_g, P_g, Y_g);
+            transformInTheWorld[0] = R_g;
+            transformInTheWorld[1] = P_g;
+            transformInTheWorld[2] = Y_g;
+            transformInTheWorld[3] = x_g;
+            transformInTheWorld[4] = y_g;
+            transformInTheWorld[5] = z_g;
 
+
+            Eigen::Affine3f transOdomToMap = T_thisPose6DInMap * T_thisPose6DInOdom.inverse();
+            float deltax, deltay, deltaz, deltaR, deltaP, deltaY;
+            pcl::getTranslationAndEulerAngles (transOdomToMap, deltax, deltay, deltaz, deltaR, deltaP, deltaY);
+
+            mtxtranformOdomToWorld.lock();
+                //renew tranformOdomToWorld
+            tranformOdomToWorld[0] = deltaR;
+            tranformOdomToWorld[1] = deltaP;
+            tranformOdomToWorld[2] = deltaY;
+            tranformOdomToWorld[3] = deltax;
+            tranformOdomToWorld[4] = deltay;
+            tranformOdomToWorld[5] = deltaz;
+            mtxtranformOdomToWorld.unlock();
+
+            publishCloud(&pubLaserCloudInWorld, unused_result, synced_odom.header.stamp, "frozen_map");
 
 
             // static tf
-
             float x, y, z, roll, pitch, yaw;
             pcl::getTranslationAndEulerAngles (T_thisPose6DInMap, x, y, z, roll, pitch, yaw);
             tf::Transform frozen_map_to_base_link = tf::Transform(tf::createQuaternionFromRPY(roll, pitch, yaw), tf::Vector3(x, y, z));
 
-
-            // tf::StampedTransform map2Baselink;
-            // try
-            // {
-            //     tfListener.waitForTransform("map", "base_link", cloudTimeStamp, ros::Duration(0.1));
-            //     tfListener.lookupTransform("map", "base_link", cloudTimeStamp, map2Baselink);
-            // } 
-            // catch (tf::TransformException ex)
-            // {
-            //     ROS_ERROR("%s",ex.what());
-            // }
 
 
             pcl::getTranslationAndEulerAngles (T_thisPose6DInOdom, x, y, z, roll, pitch, yaw);
@@ -383,35 +369,27 @@ public:
 
 
             map_to_odom = frozen_map_to_base_link * map2Baselink.inverse();
-
-
+            frozen_map_to_baselink = frozen_map_to_base_link;
+            pose_inited_ = true;
 
             double roll1, pitch1, yaw1;
-            std::cout <<"Frozen Map x:" << transformInTheWorld[3] 
-                      <<"    y:" << transformInTheWorld[4]
-                      <<"    z:" << transformInTheWorld[5] 
-                      <<"    roll:"<<transformInTheWorld[0]
-                      <<"    pitch:"<<transformInTheWorld[1]
-                      <<"    yaw:"<<transformInTheWorld[2]
-                      <<std::endl;
-
-
-            tf::Matrix3x3(map2Baselink.getRotation()).getRPY(roll1, pitch1, yaw1);
-            std::cout <<"Active Map x:"<<map2Baselink.getOrigin().getX()
-                      <<"    y:"<<map2Baselink.getOrigin().getY()
-                      <<"    z:"<<map2Baselink.getOrigin().getZ()
-                      <<"    roll:"<<roll1
-                      <<"    pitch:"<<pitch1
-                      <<"    yaw:"<<yaw1<<std::endl;
 
             tf::Matrix3x3(map_to_odom.getRotation()).getRPY(roll1, pitch1, yaw1);
-            std::cout<<"result    x:"<<map_to_odom.getOrigin().getX()
+            std::cout<<"match result x:"<<map_to_odom.getOrigin().getX()
                       <<"    y:"<<map_to_odom.getOrigin().getY()
                       <<"    z:"<<map_to_odom.getOrigin().getZ()
                       <<"    roll:"<<roll1
                       <<"    pitch:"<<pitch1
                       <<"    yaw:"<<yaw1<<std::endl;
+            static int success_counter = 1;     
+            std::string save_name = std::to_string(success_counter);    
+            std::string save_path = "/home/bot/workspace/test_vis/ndt_result_" + save_name + ".pcd";
+            pcl::io::savePCDFileBinary(save_path, *unused_result_0);
+            pcl::io::savePCDFileBinary("/home/bot/workspace/icp_result.pcd", *unused_result);
+            pcl::io::savePCDFileBinary("/home/bot/workspace/cloudGlobalMapDS.pcd", *cloudGlobalMapDS);
+            success_counter++;
         }
+
     }
 
 
@@ -421,6 +399,7 @@ public:
     void laserOdomCallBack(const nav_msgs::OdometryConstPtr& odom_msg)
     {
         odom_queue_.push_back(*odom_msg);
+        lastest_odom_time_ = odom_msg -> header.stamp;
     }
 
 
@@ -483,8 +462,20 @@ public:
         tf::Transform corrected_map_to_odom = tf::Transform(tf::createQuaternionFromRPY(roll1, pitch1, yaw1), tf::Vector3(x1, y1, z1));
         map_to_odom = corrected_map_to_odom;
 
+        process();
+
     }
 
+    void globalLocalizeThread()
+    {
+        ros::Rate rate(1);
+        while (ros::ok())
+        {
+            std::cout << "Run once " << std::endl;//do nothing, wait for a new initial guess
+            process();
+            rate.sleep();
+        }
+    }
 
     void pubMapToOdom()
     {
@@ -492,8 +483,11 @@ public:
         while (ros::ok()){
             rate.sleep();
             static tf::TransformBroadcaster tfMap2Odom;
-            tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, ros::Time::now(), "frozen_map", "map"));
-         
+            //if(pose_inited_) {
+                tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, lastest_odom_time_, "frozen_map", "map"));
+                //tfMap2Odom.sendTransform(tf::StampedTransform(frozen_map_to_baselink, lastest_odom_time_, "base_link", "frozen_map"));
+            //} 
+
         }        
     }
 
@@ -511,15 +505,12 @@ public:
 
     void process()
     {
-
-        std::cout<<" laser odom queue size:"<< odom_queue_.size()<<std::endl;
-
         while(odom_queue_.size() >= 2) {
             odom_queue_.pop_front();
         }
 
         if(odom_queue_.empty()) {
-            std::cout<<"empty laser odom queue!!!!"<<std::endl;
+            std::cout<<"[LOCALIZATION][WARNING] empty laser odom queue!"<<std::endl;
             return;
         }
 
@@ -527,22 +518,24 @@ public:
 
         while(!cloud_queue_.empty())
         {
-            
-            if(cloud_queue_.front().header.stamp.toSec() < latest_odom.header.stamp.toSec() - 0.01) {
+            float time_diff = cloud_queue_.front().header.stamp.toSec() - latest_odom.header.stamp.toSec();
+            if( time_diff < - 0.01) {
                 cloud_queue_.pop_front();
             } else {
-                std::cout<<"find closest time:"<< cloud_queue_.front().header.stamp.toSec() - latest_odom.header.stamp.toSec()<<std::endl;
+                if(time_diff > 0.1) {
+                    std::cout<<"[LOCALIZATION][WARNING] unsynchronized cloud and odom time:"<< time_diff<<std::endl;
+                }
                 break;
             }
         }
 
         if(cloud_queue_.empty()) {
-            std::cout<<"empty cloud odom queue!!!!"<<std::endl;
+            std::cout<<"[LOCALIZATION][WARNING] empty cloud odom queue!!!!"<<std::endl;
             return;
         }
 
         
-        lio_sam::cloud_info synced_cloud = cloud_queue_.back();
+        lio_sam::cloud_info synced_cloud = cloud_queue_.front();
 
 
         pcl::fromROSMsg(synced_cloud.cloud_corner,  *laserCloudCornerLast);
