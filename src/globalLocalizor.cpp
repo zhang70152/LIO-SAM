@@ -497,8 +497,8 @@ public:
         ros::Rate rate(0.5);
         while (ros::ok()){
             rate.sleep();
-            if (pubMapWorld.getNumSubscribers() == 0)
-                return;
+            // if (pubMapWorld.getNumSubscribers() == 0)
+            //     return;
             publishCloud(&pubMapWorld, cloudGlobalMap, ros::Time::now(), "frozen_map");
         }
     }
