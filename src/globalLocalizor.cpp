@@ -95,6 +95,8 @@ public:
     tf::Transform map_to_odom;
     tf::Transform frozen_map_to_baselink;
 
+    tf::StampedTransform lidar2Baselink;
+
     bool pose_inited_ = false;
 
     globalLocalizor()
@@ -116,6 +118,19 @@ public:
 
         tf::Transform initial_map_to_odom = tf::Transform(tf::createQuaternionFromRPY(0, 0, 0), tf::Vector3(0, 0, 0));
         map_to_odom = initial_map_to_odom;
+
+        if(lidarFrame != baselinkFrame)
+        {
+            try
+            {
+                tfListener.waitForTransform(lidarFrame, baselinkFrame, ros::Time(0), ros::Duration(3.0));
+                tfListener.lookupTransform(lidarFrame, baselinkFrame, ros::Time(0), lidar2Baselink);
+            }
+            catch (tf::TransformException ex)
+            {
+                ROS_ERROR("%s",ex.what());
+            }
+        }
     }
 
     void allocateMemory()
@@ -246,24 +261,24 @@ public:
 
         // update latest frozen map pose for initial guess
         {
-            tf::StampedTransform frozenMap2Baselink;
+            tf::StampedTransform frozenMap2Lidar;
             try
             {
                 tfListener.waitForTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, ros::Duration(0.1));
-                tfListener.lookupTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, frozenMap2Baselink);
+                tfListener.lookupTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, frozenMap2Lidar);
             } 
             catch (tf::TransformException ex)
             {
                 ROS_ERROR("%s",ex.what());
             }
             double roll1, pitch1, yaw1;
-            tf::Matrix3x3(frozenMap2Baselink.getRotation()).getRPY(roll1, pitch1, yaw1);
+            tf::Matrix3x3(frozenMap2Lidar.getRotation()).getRPY(roll1, pitch1, yaw1);
             transformInTheWorld[0] = roll1;
             transformInTheWorld[1] = pitch1;
             transformInTheWorld[2] = yaw1;
-            transformInTheWorld[3] = frozenMap2Baselink.getOrigin().getX();
-            transformInTheWorld[4] = frozenMap2Baselink.getOrigin().getY();
-            transformInTheWorld[5] = frozenMap2Baselink.getOrigin().getZ(); 
+            transformInTheWorld[3] = frozenMap2Lidar.getOrigin().getX();
+            transformInTheWorld[4] = frozenMap2Lidar.getOrigin().getY();
+            transformInTheWorld[5] = frozenMap2Lidar.getOrigin().getZ(); 
         }
 
         PointTypePose thisPose6DInWorld = trans2PointTypePose(transformInTheWorld);
@@ -381,13 +396,6 @@ public:
                       <<"    roll:"<<roll1
                       <<"    pitch:"<<pitch1
                       <<"    yaw:"<<yaw1<<std::endl;
-            // static int success_counter = 1;     
-            // std::string save_name = std::to_string(success_counter);    
-            // std::string save_path = "/home/bot/workspace/test_vis/ndt_result_" + save_name + ".pcd";
-            // pcl::io::savePCDFileBinary(save_path, *unused_result_0);
-            // pcl::io::savePCDFileBinary("/home/bot/workspace/icp_result.pcd", *unused_result);
-            // pcl::io::savePCDFileBinary("/home/bot/workspace/cloudGlobalMapDS.pcd", *cloudGlobalMapDS);
-            // success_counter++;
         }
 
     }
@@ -406,22 +414,15 @@ public:
 
     void initialPoseCallback(const geometry_msgs::PoseWithCovarianceStampedConstPtr& pose_msg)
     {
-        //first calculate global pose
-        //x-y-z
-
-
-        float x = pose_msg->pose.pose.position.x;
-        float y = pose_msg->pose.pose.position.y;
-        float z = pose_msg->pose.pose.position.z;
-
-        //roll-pitch-yaw
-        tf::Quaternion q_global;
+        tf::Transform map_to_base_link;
+        tf::Transform map_to_lidar;
+        tf::poseMsgToTF(pose_msg->pose.pose, map_to_base_link);
+        map_to_lidar = map_to_base_link * lidar2Baselink.inverse();
+        float x = map_to_lidar.getOrigin().getX();
+        float y = map_to_lidar.getOrigin().getY();
+        float z = map_to_lidar.getOrigin().getZ();
+        tf::Quaternion q_global = map_to_lidar.getRotation();
         double roll_global; double pitch_global; double yaw_global;
-
-        q_global.setX(pose_msg->pose.pose.orientation.x);
-        q_global.setY(pose_msg->pose.pose.orientation.y);
-        q_global.setZ(pose_msg->pose.pose.orientation.z);
-        q_global.setW(pose_msg->pose.pose.orientation.w);
 
         tf::Matrix3x3(q_global).getRPY(roll_global, pitch_global, yaw_global);
         //global transformation
@@ -561,6 +562,7 @@ public:
 };
 
 
+
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "lio_sam");
@@ -568,6 +570,7 @@ int main(int argc, char** argv)
     globalLocalizor GL;
 
     ROS_INFO("\033[1;32m----> Global localizer Started.\033[0m");
+
 
     std::thread visualizeFrozenMapThread(&globalLocalizor::visualizeFrozenlMapThread, &GL);
     std::thread localizeInWorldThread(&globalLocalizor::globalLocalizeThread, &GL);
