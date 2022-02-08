@@ -249,8 +249,8 @@ public:
             tf::StampedTransform frozenMap2Baselink;
             try
             {
-                tfListener.waitForTransform("frozen_map", "base_link", synced_odom.header.stamp, ros::Duration(0.1));
-                tfListener.lookupTransform("frozen_map", "base_link", synced_odom.header.stamp, frozenMap2Baselink);
+                tfListener.waitForTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, ros::Duration(0.1));
+                tfListener.lookupTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, frozenMap2Baselink);
             } 
             catch (tf::TransformException ex)
             {
@@ -381,13 +381,13 @@ public:
                       <<"    roll:"<<roll1
                       <<"    pitch:"<<pitch1
                       <<"    yaw:"<<yaw1<<std::endl;
-            static int success_counter = 1;     
-            std::string save_name = std::to_string(success_counter);    
-            std::string save_path = "/home/bot/workspace/test_vis/ndt_result_" + save_name + ".pcd";
-            pcl::io::savePCDFileBinary(save_path, *unused_result_0);
-            pcl::io::savePCDFileBinary("/home/bot/workspace/icp_result.pcd", *unused_result);
-            pcl::io::savePCDFileBinary("/home/bot/workspace/cloudGlobalMapDS.pcd", *cloudGlobalMapDS);
-            success_counter++;
+            // static int success_counter = 1;     
+            // std::string save_name = std::to_string(success_counter);    
+            // std::string save_path = "/home/bot/workspace/test_vis/ndt_result_" + save_name + ".pcd";
+            // pcl::io::savePCDFileBinary(save_path, *unused_result_0);
+            // pcl::io::savePCDFileBinary("/home/bot/workspace/icp_result.pcd", *unused_result);
+            // pcl::io::savePCDFileBinary("/home/bot/workspace/cloudGlobalMapDS.pcd", *cloudGlobalMapDS);
+            // success_counter++;
         }
 
     }

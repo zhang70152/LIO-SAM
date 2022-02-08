@@ -107,3 +107,16 @@ target_link_libraries(${PROJECT_NAME}_imuPreintegration ${catkin_LIBRARIES} ${PC
 add_executable(${PROJECT_NAME}_globalLocalize src/globalLocalizor.cpp)
 add_dependencies(${PROJECT_NAME}_globalLocalize ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
 target_link_libraries(${PROJECT_NAME}_globalLocalize ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+
+install(TARGETS  
+  ${PROJECT_NAME}_imageProjection
+  ${PROJECT_NAME}_featureExtraction
+  ${PROJECT_NAME}_mapOptmization
+  ${PROJECT_NAME}_imuPreintegration
+  ${PROJECT_NAME}_globalLocalize
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+    
+install(DIRECTORY launch config
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+)
