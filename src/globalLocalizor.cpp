@@ -264,8 +264,8 @@ public:
             tf::StampedTransform frozenMap2Lidar;
             try
             {
-                tfListener.waitForTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, ros::Duration(0.1));
-                tfListener.lookupTransform("frozen_map", "center_3D_lidar", synced_odom.header.stamp, frozenMap2Lidar);
+                tfListener.waitForTransform(mapFrame, "center_3D_lidar", synced_odom.header.stamp, ros::Duration(0.1));
+                tfListener.lookupTransform(mapFrame, "center_3D_lidar", synced_odom.header.stamp, frozenMap2Lidar);
             } 
             catch (tf::TransformException ex)
             {
@@ -369,7 +369,7 @@ public:
             tranformOdomToWorld[5] = deltaz;
             mtxtranformOdomToWorld.unlock();
 
-            publishCloud(&pubLaserCloudInWorld, unused_result, synced_odom.header.stamp, "frozen_map");
+            publishCloud(&pubLaserCloudInWorld, unused_result, synced_odom.header.stamp, mapFrame);
 
 
             // static tf
@@ -452,9 +452,6 @@ public:
         tranformOdomToWorld[5] = delta_z;
         mtxtranformOdomToWorld.unlock();
 
-
-
-
         // static tf
         //Eigen::Affine3f transMap2Odom = T_OdomToMap.inverse();
         Eigen::Affine3f transMap2Odom = T_OdomToMap;
@@ -484,11 +481,7 @@ public:
         while (ros::ok()){
             rate.sleep();
             static tf::TransformBroadcaster tfMap2Odom;
-            //if(pose_inited_) {
-                tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, lastest_odom_time_, "frozen_map", "map"));
-                //tfMap2Odom.sendTransform(tf::StampedTransform(frozen_map_to_baselink, lastest_odom_time_, "base_link", "frozen_map"));
-            //} 
-
+            tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, lastest_odom_time_, mapFrame, odometryFrame));
         }        
     }
 
@@ -497,9 +490,7 @@ public:
         ros::Rate rate(0.5);
         while (ros::ok()){
             rate.sleep();
-            // if (pubMapWorld.getNumSubscribers() == 0)
-            //     return;
-            publishCloud(&pubMapWorld, cloudGlobalMap, ros::Time::now(), "frozen_map");
+            publishCloud(&pubMapWorld, cloudGlobalMap, ros::Time::now(), mapFrame);
         }
     }
 
