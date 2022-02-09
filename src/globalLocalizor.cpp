@@ -86,19 +86,15 @@ public:
     std::deque<nav_msgs::Odometry> odom_queue_;
     std::deque<lio_sam::cloud_info> cloud_queue_;
 
-    ros::Time lastest_odom_time_;
-
-
 
     geometry_msgs::PoseStamped poseOdomToMap;
     ros::Publisher pubOdomToMapPose;
-    tf::Transform map_to_odom;
+    tf::Transform map_to_odom_;
     tf::Transform frozen_map_to_baselink;
 
     tf::StampedTransform lidar2Baselink;
 
-    bool pose_inited_ = false;
-
+    double last_process_time_;
     globalLocalizor()
     {
         subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &globalLocalizor::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
@@ -117,7 +113,7 @@ public:
         allocateMemory();
 
         tf::Transform initial_map_to_odom = tf::Transform(tf::createQuaternionFromRPY(0, 0, 0), tf::Vector3(0, 0, 0));
-        map_to_odom = initial_map_to_odom;
+        map_to_odom_ = initial_map_to_odom;
 
         if(lidarFrame != baselinkFrame)
         {
@@ -131,6 +127,7 @@ public:
                 ROS_ERROR("%s",ex.what());
             }
         }
+        last_process_time_ = 0;
     }
 
     void allocateMemory()
@@ -169,6 +166,19 @@ public:
     void laserCloudInfoHandler(const lio_sam::cloud_infoConstPtr& msgIn)
     {
         cloud_queue_.push_back(*msgIn);
+        if(last_process_time_ == 0 ) {
+            last_process_time_ = msgIn->header.stamp.toSec();
+            return;
+        }
+
+        if(msgIn->header.stamp.toSec() - last_process_time_ > 3.0) {
+            process();
+            last_process_time_ = msgIn->header.stamp.toSec();
+        }
+
+        pubMapToOdom(msgIn->header.stamp);
+        
+
     }
 
 
@@ -383,16 +393,15 @@ public:
             tf::Transform map2Baselink = tf::Transform(tf::createQuaternionFromRPY(roll, pitch, yaw), tf::Vector3(x, y, z));
 
 
-            map_to_odom = frozen_map_to_base_link * map2Baselink.inverse();
+            map_to_odom_ = frozen_map_to_base_link * map2Baselink.inverse();
             frozen_map_to_baselink = frozen_map_to_base_link;
-            pose_inited_ = true;
 
             double roll1, pitch1, yaw1;
 
-            tf::Matrix3x3(map_to_odom.getRotation()).getRPY(roll1, pitch1, yaw1);
-            std::cout<<"match result x:"<<map_to_odom.getOrigin().getX()
-                      <<"    y:"<<map_to_odom.getOrigin().getY()
-                      <<"    z:"<<map_to_odom.getOrigin().getZ()
+            tf::Matrix3x3(map_to_odom_.getRotation()).getRPY(roll1, pitch1, yaw1);
+            std::cout<<"match result x:"<<map_to_odom_.getOrigin().getX()
+                      <<"    y:"<<map_to_odom_.getOrigin().getY()
+                      <<"    z:"<<map_to_odom_.getOrigin().getZ()
                       <<"    roll:"<<roll1
                       <<"    pitch:"<<pitch1
                       <<"    yaw:"<<yaw1<<std::endl;
@@ -407,7 +416,6 @@ public:
     void laserOdomCallBack(const nav_msgs::OdometryConstPtr& odom_msg)
     {
         odom_queue_.push_back(*odom_msg);
-        lastest_odom_time_ = odom_msg -> header.stamp;
     }
 
 
@@ -458,7 +466,7 @@ public:
         float x1, y1, z1, roll1, pitch1, yaw1;
         pcl::getTranslationAndEulerAngles (transMap2Odom, x1, y1, z1, roll1, pitch1, yaw1);
         tf::Transform corrected_map_to_odom = tf::Transform(tf::createQuaternionFromRPY(roll1, pitch1, yaw1), tf::Vector3(x1, y1, z1));
-        map_to_odom = corrected_map_to_odom;
+        map_to_odom_ = corrected_map_to_odom;
 
         process();
 
@@ -466,7 +474,7 @@ public:
 
     void globalLocalizeThread()
     {
-        ros::Rate rate(1);
+        ros::Rate rate(3);
         while (ros::ok())
         {
             std::cout << "Run once " << std::endl;//do nothing, wait for a new initial guess
@@ -475,14 +483,24 @@ public:
         }
     }
 
-    void pubMapToOdom()
+    void pubMapToOdom(ros::Time time_stamp)
     {
-        ros::Rate rate(10);
-        while (ros::ok()){
-            rate.sleep();
-            static tf::TransformBroadcaster tfMap2Odom;
-            tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, lastest_odom_time_, mapFrame, odometryFrame));
-        }        
+        ros::Time pub_timestamp;
+        tf::StampedTransform odom2Baselink;
+        try
+        {
+            tfListener.waitForTransform(odometryFrame, baselinkFrame, ros::Time::now() - ros::Duration(0.1), ros::Duration(0.15));
+            tfListener.lookupTransform(odometryFrame, baselinkFrame, ros::Time::now() - ros::Duration(0.1), odom2Baselink);
+            pub_timestamp = odom2Baselink.stamp_;
+        } 
+        catch (tf::TransformException ex)
+        {
+            ROS_ERROR("%s",ex.what());
+            pub_timestamp = ros::Time::now();
+        }
+
+        static tf::TransformBroadcaster tfMap2Odom;
+        tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom_, pub_timestamp, mapFrame, odometryFrame));    
     }
 
     void visualizeFrozenlMapThread()
@@ -526,7 +544,7 @@ public:
             return;
         }
 
-        
+        std::cout<<"queue size:"<<cloud_queue_.size()<<std::endl;
         lio_sam::cloud_info synced_cloud = cloud_queue_.front();
 
 
@@ -564,13 +582,13 @@ int main(int argc, char** argv)
 
 
     std::thread visualizeFrozenMapThread(&globalLocalizor::visualizeFrozenlMapThread, &GL);
-    std::thread localizeInWorldThread(&globalLocalizor::globalLocalizeThread, &GL);
-    std::thread publishMapToOdomThread(&globalLocalizor::pubMapToOdom, &GL);
+    // std::thread localizeInWorldThread(&globalLocalizor::globalLocalizeThread, &GL);
+
     ros::spin();
-
-
-    localizeInWorldThread.join();
+    // localizeInWorldThread.join();
     visualizeFrozenMapThread.join();
-    publishMapToOdomThread.join();
+
+
+
     return 0;
 }
